@@ -8,7 +8,7 @@ de donnée du service [netdisco](https://netdisco.org/). Génère un fichier CSV
 Si lança de la machine netdisco, les deps devraient être satisfaite. Sinon:
 
 ```shell
-$ sudo libdbi-perl libdb-pg-perl
+$ sudo apt install libdbi-perl libdb-pg-perl
 ```
 
 ## utilisation
