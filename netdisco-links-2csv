@@ -1,0 +1,188 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use DBI;
+
+# COLUMNS: left_ip,left_dns,left_name,left_port,left_descr,aggports,
+#  aggspeed,right_ip,right_dns,right_name,right_port,right_descr
+
+my $sql_query = "
+  WITH BothWays AS
+    ( SELECT ldp.ip AS left_ip,
+             ld.dns AS left_dns,
+             ld.name AS left_name,
+             array_agg(ldp.port ORDER BY ldp.port) AS left_port,
+             array_agg(ldp.name ORDER BY ldp.name) AS left_descr,
+
+             count(ldpp.*) AS aggports,
+             sum(COALESCE(ldpp.raw_speed, 0)) AS aggspeed,
+
+             di.ip AS right_ip,
+             rd.dns AS right_dns,
+             rd.name AS right_name,
+             array_agg(ldp.remote_port ORDER BY ldp.remote_port) AS right_port,
+             array_agg(rdp.name ORDER BY rdp.name) AS right_descr
+
+     FROM device_port ldp
+
+     LEFT OUTER JOIN device_port_properties ldpp ON (
+        (ldp.ip = ldpp.ip) AND (ldp.port = ldpp.port)
+        AND (ldp.type IS NULL
+             OR ldp.type !~* '^(53|ieee8023adLag|propVirtual|l2vlan|l3ipvlan|135|136|137)\$')
+        AND (ldp.is_master = 'false'
+             OR ldp.slave_of IS NOT NULL) )
+
+     INNER JOIN device ld ON ldp.ip = ld.ip
+     INNER JOIN
+      (SELECT ip, alias FROM device_ip WHERE alias IN
+        (SELECT alias FROM device_ip GROUP BY alias HAVING count(alias) = 1)) di
+        ON ldp.remote_ip = di.alias
+     INNER JOIN device rd ON di.ip = rd.ip
+
+     LEFT OUTER JOIN device_port rdp ON (di.ip = rdp.ip
+                                         AND ((ldp.remote_port = rdp.port)
+                                              OR (ldp.remote_port = rdp.name)
+                                              OR (ldp.remote_port = rdp.descr)))
+
+     WHERE ldp.remote_port IS NOT NULL
+       AND ldp.port !~* 'vlan'
+       AND (ldp.descr IS NULL OR ldp.descr !~* 'vlan')
+
+     GROUP BY left_ip,
+              left_dns,
+              left_name,
+              right_ip,
+              right_dns,
+              right_name )
+
+  SELECT *
+  FROM BothWays b
+  WHERE NOT EXISTS
+      ( SELECT *
+       FROM BothWays b2
+       WHERE b2.right_ip = b.left_ip
+         AND b2.right_port = b.left_port
+         AND b2.left_ip < b.left_ip )
+  ORDER BY aggspeed DESC, 1, 2
+";
+
+sub left_ip {
+  my $row = shift;
+  if ($row->{left_ip}) {
+    return $row->{left_ip};
+  } 
+  return "NULL";
+}
+
+sub left_dns {
+  my $row = shift;
+  if ($row->{left_dns}) {
+    return $row->{left_dns};
+  }
+  return "NULL";
+}
+
+sub left_name {
+  my $row = shift;
+  if ($row->{left_name}) {
+    return $row->{left_name};
+  }
+  return "NULL";
+}
+
+sub left_port {
+  my $row = shift;
+  if ($row->{left_port}) {
+    if ($row->{left_port}[0]) {
+      return $row->{left_port}[0];
+    }
+  }
+  return "NULL";
+}
+
+sub left_descr {
+  my $row = shift;
+  if ($row->{left_descr}) {
+    if ($row->{left_descr}[0]) {
+      return $row->{left_descr}[0];
+    }
+  } 
+  return "NULL";
+}
+
+sub aggports {
+  my $row = shift;
+  return $row->{aggports};
+}
+
+sub aggspeed {
+  my $row = shift;
+  return $row->{aggspeed};
+}
+
+sub right_ip {
+  my $row = shift;
+  if ($row->{right_ip}) {
+    return $row->{right_ip};
+  }
+  return "NULL";
+}
+
+sub right_dns {
+  my $row = shift;
+  if ($row->{right_dns}) {
+    return $row->{right_dns};
+  }
+  return "NULL";
+}
+
+sub right_name {
+  my $row = shift;
+  if ($row->{right_name}) {
+    return $row->{right_name};
+  }
+  return "NULL";
+}
+
+sub right_port {
+  my $row = shift;
+  if ($row->{right_port}) {
+    if ($row->{right_port}[0]) {
+      return $row->{right_port}[0];
+    }
+  } 
+  return "NULL";
+}
+
+sub right_descr {
+  my $row = shift;
+  if ($row->{right_descr}) {
+    if ($row->{right_descr}[0]) {
+      return $row->{right_descr}[0];
+    }
+  };
+  return "NULL";
+}
+
+my $dbh = DBI->connect("dbi:Pg:dbname=netdisco") or die "Connection echec";
+my $sth = $dbh->prepare($sql_query) or die "Prepare echec";
+$sth->execute() or die "Execute echec";
+
+print "left_ip|left_dns|left_name|left_port|left_descr|aggports|aggspeed|right_ip|right_dns|right_name|right_port|right_descr";
+while (my $row = $sth->fetchrow_hashref()) {
+  print
+    left_ip($row) . "|"
+  . left_name($row) . "|"
+  . left_dns($row) . "|"
+  . left_port($row) . "|"
+  . left_descr($row) . "|"
+  . aggports($row) . "|"
+  . aggspeed($row) . "|"
+  . right_ip($row) . "|"
+  . right_name($row) . "|"
+  . right_dns($row) . "|"
+  . right_port($row) . "|"
+  . right_descr($row) . "\n"; 
+}
+
